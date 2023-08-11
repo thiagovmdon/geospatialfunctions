@@ -938,3 +938,124 @@ def count_num_measurements(timeseries: pd.pandas.core.frame.DataFrame):
     num_measurements_df["num_yearly_complete"] = (timeseries_yearly >= 365).sum()
     
     return num_measurements_df
+
+#%% 14. Compute the longest gap periods for each column (measurement) in the input DataFrame.
+
+from tqdm import tqdm
+
+def longest_gap_measurements(timeseries: pd.DataFrame):
+    """
+    Inputs
+    ------------------
+    timeseries: dataset[Index = Datetime; columns = [Measurements]]: 
+        dataframe with datetime as the index, and with each column representing one measurement. 
+        It assumes that the gaps in the measurements are stored as np.nan
+    Returns
+    --------------------
+    pandas.Series with index as column names and values as the longest gap period.
+    """
+
+
+    # Calculate the longest continuous range with no gaps for each gauge
+    longest_gap_periods = pd.DataFrame(index=timeseries.columns, columns=['longest_gap_period'])
+
+    for col in tqdm(timeseries.columns):
+        max_gap = 0
+        current_gap = 0
+        for value in timeseries[col]:
+            if pd.notna(value):
+                current_gap += 1
+                max_gap = max(max_gap, current_gap)
+            else:
+                current_gap = 0
+        longest_gap_periods.at[col, 'longest_gap_period'] = max_gap
+    
+    return longest_gap_periods
+
+#%% 15. Plot a map of points with color-coded categories based on measurement data.
+### For example, you can plot the number of years with measurement in a color based map. 
+
+def plot_num_measurementsmap(plotsome: pd.pandas.core.frame.DataFrame, xcoords="lon", ycoords="lat", column_labels = "num_yearly_complete",
+                             crsproj='epsg:4326', showcodes=False, figsizeproj=(15, 30), markersize_map=3, north_arrow=True, 
+                             set_map_limits=False, minx=0, miny=0, maxx=1, maxy=1, color_categories=None, color_mapping=None,
+                             legend_title=None, legend_labels=None, legend_loc='upper left'):
+    """
+    Inputs
+    ------------------
+    plotsome: dataset[Index = Code; columns = [Longitude, Latitude, num_years]]:
+        dataframe with the codes as the index, and with at least three columns in the order of
+        "Longitude-X", "Latitude-y", and "num_years" (in EPSG: 4326 as the first and second columns.
+
+    showcodes:
+        By default it is set as "False". If "True" it will show the codes from the index.
+
+    color_categories:
+        List of tuples defining color categories and their corresponding ranges. Example:
+        [(0, 5), (5, 20), (20, 40), (40, 80), (80, np.inf)]
+
+    color_mapping:
+        Dictionary mapping color categories to specific colors. Example:
+        {'0-5': 'blue', '5-20': 'green', '20-40': 'yellow', '40-80': 'orange', '80-inf': 'red'}
+
+    legend_title:
+        Title of the legend.
+
+    legend_labels:
+        Labels for each category in the legend.
+
+    legend_loc:
+        Location of the legend. Defaults to 'upper left'.
+
+    Returns
+    --------------------
+    plt.plot: The output is a plt.plot with the points spatially distributed in the area.
+    """
+
+    crs = {'init': crsproj}
+    geometry = plotsome.apply(lambda row: Point(row[xcoords], row[ycoords]), axis=1)
+    geodata = gpd.GeoDataFrame(plotsome, crs=crs, geometry=geometry)
+    geodatacond = geodata
+
+    if color_categories is not None and color_mapping is not None:
+        geodatacond['color_category'] = pd.cut(geodatacond[column_labels], bins=[c[0] for c in color_categories] + [np.inf], labels=[f'{c[0]}-{c[1]}' for c in color_categories])
+    else:
+        raise ValueError("Both color_categories and color_mapping must be provided.")
+
+    # Plot the figure and set size:
+    fig, ax = plt.subplots(figsize=figsizeproj)
+
+    # Plotting and legend:
+    for category, group in geodatacond.groupby('color_category'):
+        group.plot(ax=ax, color=color_mapping[category], markersize=markersize_map, legend=False, label=category)
+
+    if showcodes == True:
+        geodatacond["Code"] = geodatacond.index
+        geodatacond.plot(column='Code', ax=ax)
+        for x, y, label in zip(geodatacond.geometry.x, geodatacond.geometry.y, geodatacond.index):
+            ax.annotate(label, xy=(x, y), xytext=(1, 1), textcoords="offset points")
+        plt.rcParams.update({'font.size': 12})
+
+    if set_map_limits == False:
+        total_bounds = geodatacond.total_bounds
+        minx, miny, maxx, maxy = total_bounds
+        ax.set_xlim(minx, maxx)
+        ax.set_ylim(miny, maxy)
+
+    # Plot the legend inside the plot
+    if legend_labels is None:
+        legend_labels = [f'{c[0]}-{c[1]}' for c in color_categories]
+        
+    if legend_title is not None:
+        ax.legend(title=legend_title, labels=legend_labels, loc=legend_loc)
+
+    # Plot the north arrow:
+    if north_arrow == True:
+        x, y, arrow_length = 0.025, 0.125, 0.1
+
+        ax.annotate('N', xy=(x, y), xytext=(x, y - arrow_length),
+                    arrowprops=dict(facecolor='black', width=5, headwidth=15),
+                    ha='center', va='center', fontsize=18,
+                    xycoords=ax.transAxes)
+
+    return fig, ax
+
